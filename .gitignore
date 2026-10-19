@@ -1,0 +1,28 @@
+# Python-generated files
+src/__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Environments
+.venv
+.env
+
+# Notebook cache file
+py/__marimo__
+
+# IDE settings
+.vscode
+
+# Logs
+logs
+
+# Dataset and database
+data
+db
+
+# Cache, temp files
+.ruff_cache
+temp
