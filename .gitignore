@@ -21,7 +21,6 @@ logs
 
 # Dataset and database
 data
-db
 
 # Cache, temp files
 .ruff_cache

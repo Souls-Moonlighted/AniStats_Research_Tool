@@ -1,0 +1,16 @@
+title = "MyAnimeList anime ranking example"
+
+[anime]
+limit = 100
+offset = 0
+nsfw = false
+endpoint = "anime/ranking"
+fields = [
+    "id",
+    "title",
+    "mean",
+    "rank",
+    "popularity",
+    "genres{name}",
+    "studios{name}",
+]

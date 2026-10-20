@@ -1,21 +1,9 @@
-import os
-import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import cast
 
 import tomli_w
-
-try:
-    CLIENT_ID = os.environ["MAL_CLIENT_ID"]
-except KeyError:
-    print(
-        "Error: API key not found. Please set the MAL_CLIENT_ID environment variable with your MyAnimeList API key"
-    )
-    sys.exit(1)
-
-DEFAULT_CONFIG_PATH = Path(__file__).parents[2] / "configs" / "request.toml"
 
 
 @dataclass(slots=True, frozen=True)
@@ -30,7 +18,7 @@ class RequestConfig:
         limit: Maximum number of results to return.
         offset: Number of results to skip.
         nsfw: Whether NSFW results are included.
-        source: Source or ranking used for the request.
+        endpoint: MAL API endpoint for this request.
         fields: Response fields to include.
 
     Examples:
@@ -39,7 +27,7 @@ class RequestConfig:
         ...     limit=100,
         ...     offset=0,
         ...     nsfw=False,
-        ...     source="popular",
+        ...     endpoint="anime/ranking",
         ...     fields=["id", "title"],
         ... )
         >>> anime.write_request_config("configs/request.toml")
@@ -54,13 +42,13 @@ class RequestConfig:
     limit: int
     offset: int
     nsfw: bool
-    source: str
+    endpoint: str
     fields: list[str]
 
     @classmethod
     def load_config(
         cls,
-        config_path: Path | str = DEFAULT_CONFIG_PATH,
+        config_path: Path | str,
         config_name: str | None = None,
     ) -> "RequestConfig":
         """Load one request from a named table in a TOML config file.
@@ -108,9 +96,7 @@ class RequestConfig:
                 f"Configuration {config_name!r} not found in {config_path}"
             ) from None
 
-    def write_request_config(
-        self, config_path: Path | str = DEFAULT_CONFIG_PATH
-    ) -> None:
+    def write_request_config(self, config_path: Path | str, title: str | None) -> None:
         """Write this request as a named table, merging it into an existing file.
 
         Other request tables are preserved; a table with the same name is
@@ -119,6 +105,7 @@ class RequestConfig:
         Args:
             config_path: Destination TOML file. Created with parent directories
                 if it does not already exist.
+            title: Title for the TOML file.
 
         Raises:
             FileNotFoundError: An existing configuration file cannot be read.
@@ -134,20 +121,27 @@ class RequestConfig:
             ...     limit=50,
             ...     offset=0,
             ...     nsfw=False,
-            ...     source="top",
+            ...     endpoint="manga/ranking",
             ...     fields=["id", "title"],
             ... )
-            >>> request.write_request_config("configs/request.toml")
+            >>> request.write_request_config("configs/request.toml", title="Request configs")
         """
         config_path = Path(config_path)
-        existing = (
-            RequestConfigs.load_config(config_path)
-            if config_path.exists()
-            else RequestConfigs(RequestConfigs.DEFAULT_TITLE, {})
-        )
-        configs = dict(existing.configs)
+        configs: dict[str, RequestConfig] = {}
+
+        if config_path.exists():
+            existing = RequestConfigs.load_config(config_path)
+            configs.update(existing.configs)
+            if title is None:
+                title = existing.title
+
+        if title is None:
+            raise ValueError(
+                "Title must be provided when creating a new configuration file"
+            )
+
         configs[self.name] = self
-        RequestConfigs(existing.title, configs).write_config(config_path, merge=False)
+        RequestConfigs(title, configs).write_config(config_path, merge=False)
 
 
 @dataclass(slots=True, frozen=True)
@@ -157,17 +151,16 @@ class RequestConfigs:
     Attributes:
         title: Human-readable title written at the top of the TOML file.
         configs: Mapping from each request name to its configuration.
-        DEFAULT_TITLE: Default title used when loading files without a title.
 
     Examples:
         >>> configs = RequestConfigs(
         ...     title="Request configs",
         ...     configs={
         ...         "anime": RequestConfig(
-        ...             "anime", 100, 0, False, "popular", ["id", "title"]
+        ...             "anime", 100, 0, False, "anime/ranking", ["id", "title"]
         ...         ),
         ...         "manga": RequestConfig(
-        ...             "manga", 50, 0, False, "top", ["id", "title"]
+        ...             "manga", 50, 0, False, "manga/ranking", ["id", "title"]
         ...         ),
         ...     },
         ... )
@@ -179,8 +172,6 @@ class RequestConfigs:
     title: str
     configs: dict[str, RequestConfig]
 
-    DEFAULT_TITLE: ClassVar[str] = "Request configs"
-
     def __post_init__(self) -> None:
         """Validate that each mapping key matches the request's name.
 
@@ -191,9 +182,7 @@ class RequestConfigs:
             raise ValueError("Each request config must be stored under its own name")
 
     @classmethod
-    def load_config(
-        cls, config_path: Path | str = DEFAULT_CONFIG_PATH
-    ) -> "RequestConfigs":
+    def load_config(cls, config_path: Path | str) -> "RequestConfigs":
         """Load all named requests from a TOML config file.
 
         Args:
@@ -210,7 +199,7 @@ class RequestConfigs:
         Examples:
             >>> configs = RequestConfigs.load_config("configs/request.toml")
             >>> for name, request in configs.configs.items():
-            ...     print(name, request.source)
+            ...     print(name, request.endpoint)
         """
         config_path = Path(config_path)
         if not config_path.exists():
@@ -219,7 +208,7 @@ class RequestConfigs:
         with config_path.open("rb") as config_file:
             document = cast(dict[str, object], tomllib.load(config_file))
 
-        title_value = document.get("title", cls.DEFAULT_TITLE)
+        title_value = document.get("title")
         if not isinstance(title_value, str):
             raise TypeError("Configuration title must be a string")
 
@@ -236,7 +225,7 @@ class RequestConfigs:
 
     def write_config(
         self,
-        config_path: Path | str = DEFAULT_CONFIG_PATH,
+        config_path: Path | str,
         *,
         merge: bool = True,
     ) -> None:
@@ -285,7 +274,7 @@ def _request_parameters(config: RequestConfig) -> dict[str, object]:
         "limit": config.limit,
         "offset": config.offset,
         "nsfw": config.nsfw,
-        "source": config.source,
+        "endpoint": config.endpoint,
         "fields": config.fields,
     }
 
@@ -298,7 +287,7 @@ def _request_config_from_table(name: str, table: object) -> RequestConfig:
     limit = table.get("limit")
     offset = table.get("offset")
     nsfw = table.get("nsfw")
-    source = table.get("source")
+    endpoint = table.get("endpoint")
     fields_value = table.get("fields")
 
     if type(limit) is not int:
@@ -307,8 +296,8 @@ def _request_config_from_table(name: str, table: object) -> RequestConfig:
         raise TypeError(f"Configuration {name!r} must define an integer offset")
     if not isinstance(nsfw, bool):
         raise TypeError(f"Configuration {name!r} must define a boolean nsfw")
-    if not isinstance(source, str):
-        raise TypeError(f"Configuration {name!r} must define a string source")
+    if not isinstance(endpoint, str):
+        raise TypeError(f"Configuration {name!r} must define a string endpoint")
     if not isinstance(fields_value, list):
         raise TypeError(f"Configuration {name!r} must define a list of string fields")
     fields: list[str] = []
@@ -319,4 +308,4 @@ def _request_config_from_table(name: str, table: object) -> RequestConfig:
             )
         fields.append(field)
 
-    return RequestConfig(name, limit, offset, nsfw, source, fields)
+    return RequestConfig(name, limit, offset, nsfw, endpoint, fields)
